@@ -1,9 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
-
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
-
 const SAMAGAM_INFO = `
 79th Annual Nirankari Sant Samagam
 
@@ -22,29 +16,23 @@ Samalkha
 Haryana
 India
 
-IMPORTANT:
-
-The following information is NOT yet available
-in this knowledge base:
+Information not yet available in this knowledge base:
 
 - Train schedules
 - Special train stoppages
-- Shuttle schedules
 - Bus schedules
+- Shuttle schedules
 - Accommodation arrangements
 - Detailed programme timings
 - Parking arrangements
 - Helpline numbers
 - Other operational announcements
 
-Do not invent any unavailable information.
+Never invent unavailable information.
 `;
 
-export default async function handler(req, res) {
 
-  /*
-   * CORS
-   */
+export default async function handler(req, res) {
 
   res.setHeader(
     "Access-Control-Allow-Origin",
@@ -62,47 +50,52 @@ export default async function handler(req, res) {
   );
 
 
-  /*
-   * OPTIONS
-   */
-
   if (req.method === "OPTIONS") {
-
-    return res
-      .status(200)
-      .end();
-
+    return res.status(200).end();
   }
 
 
   /*
-   * Simple browser health check
+   * Browser health check
    */
-
   if (req.method === "GET") {
 
-    return res
-      .status(200)
-      .json({
-        status: "success",
-        message:
-          "Samagam chatbot Gemini backend is working"
-      });
+    return res.status(200).json({
+      status: "success",
+      backend: "Gemini REST",
+      geminiKeyConfigured:
+        Boolean(process.env.GEMINI_API_KEY)
+    });
 
   }
 
-
-  /*
-   * Only POST after this point
-   */
 
   if (req.method !== "POST") {
 
-    return res
-      .status(405)
-      .json({
-        error: "Method not allowed"
-      });
+    return res.status(405).json({
+      error: "Method not allowed"
+    });
+
+  }
+
+
+  /*
+   * Check API key before doing anything else
+   */
+  const GEMINI_API_KEY =
+    process.env.GEMINI_API_KEY;
+
+
+  if (!GEMINI_API_KEY) {
+
+    console.error(
+      "GEMINI_API_KEY is missing in Vercel"
+    );
+
+    return res.status(500).json({
+      error:
+        "GEMINI_API_KEY is not configured"
+    });
 
   }
 
@@ -118,64 +111,53 @@ export default async function handler(req, res) {
       typeof message !== "string"
     ) {
 
-      return res
-        .status(400)
-        .json({
-          error:
-            "Message is required"
-        });
+      return res.status(400).json({
+        error: "Message is required"
+      });
 
     }
 
 
     const systemInstruction = `
-You are "Samagam Sahayak", a helpful information
-assistant for the 79th Annual Nirankari Sant Samagam.
+You are Samagam Sahayak,
+an information assistant for the
+79th Annual Nirankari Sant Samagam.
 
-Your purpose is to help devotees and visitors
-understand officially supplied Samagam information.
+LANGUAGE:
 
-LANGUAGE RULES:
+- Hindi question → answer in Hindi.
+- English question → answer in English.
+- Hinglish question → answer in simple Hinglish.
 
-1. If the visitor writes in Hindi, reply in Hindi.
+Keep answers short, respectful,
+clear and easy to understand.
 
-2. If the visitor writes in English, reply in English.
+You may use:
+"धन निरंकार जी 🙏"
+or
+"Dhan Nirankar Ji 🙏"
 
-3. If the visitor writes in Hinglish, reply in
-   simple natural Hinglish.
+IMPORTANT:
 
-4. Keep responses concise, clear, respectful
-   and easy to understand.
+Use ONLY the verified Samagam
+information supplied below.
 
-5. You may begin the first relevant response with:
-   "धन निरंकार जी 🙏"
-   or
-   "Dhan Nirankar Ji 🙏"
-
-INFORMATION RULES:
-
-You must only use the VERIFIED INFORMATION below
-for factual Samagam information.
-
-Do NOT invent, assume, estimate or fabricate:
+Never invent:
 
 - train numbers
 - train timings
 - railway stoppages
-- bus timings
+- buses
 - shuttle timings
 - accommodation
 - programme timings
 - parking
-- phone numbers
-- official announcements
+- contact numbers
+- Mission announcements
 
-If the requested information is not present,
-say clearly that the official information has
-not yet been added or announced.
-
-Do not pretend that unavailable information
-has been confirmed.
+If requested information is unavailable,
+clearly say that official information has
+not yet been added.
 
 VERIFIED INFORMATION:
 
@@ -183,65 +165,142 @@ ${SAMAGAM_INFO}
 `;
 
 
-    const response =
-      await ai.models.generateContent({
+    const url =
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent";
 
-        model:
-          "gemini-3.8-flash",
 
-        contents:
-          message,
+    const geminiResponse =
+      await fetch(url, {
 
-        config: {
+        method: "POST",
 
-          systemInstruction:
-            systemInstruction,
+        headers: {
 
-          temperature: 0.2,
+          "Content-Type":
+            "application/json",
 
-          maxOutputTokens: 400
+          "x-goog-api-key":
+            GEMINI_API_KEY
 
-        }
+        },
+
+        body: JSON.stringify({
+
+          system_instruction: {
+
+            parts: [
+              {
+                text:
+                  systemInstruction
+              }
+            ]
+
+          },
+
+          contents: [
+            {
+
+              role: "user",
+
+              parts: [
+                {
+                  text: message
+                }
+              ]
+
+            }
+          ],
+
+          generationConfig: {
+
+            temperature: 0.2,
+
+            maxOutputTokens: 400
+
+          }
+
+        })
 
       });
 
 
-    const answer =
-      response.text;
+    const data =
+      await geminiResponse.json();
 
 
-    if (!answer) {
+    /*
+     * Log Google's actual response
+     * if something fails.
+     */
+    if (!geminiResponse.ok) {
 
-      throw new Error(
-        "Gemini returned an empty response"
+      console.error(
+        "Gemini API error:",
+        JSON.stringify(data)
       );
+
+      return res
+        .status(geminiResponse.status)
+        .json({
+
+          error:
+            "Gemini API request failed",
+
+          details:
+            data?.error?.message ||
+            "Unknown Gemini error"
+
+        });
 
     }
 
 
-    return res
-      .status(200)
-      .json({
-        status: "success",
-        answer: answer
+    const answer =
+      data?.candidates?.[0]
+        ?.content?.parts?.[0]
+        ?.text;
+
+
+    if (!answer) {
+
+      console.error(
+        "Gemini returned no answer:",
+        JSON.stringify(data)
+      );
+
+      return res.status(500).json({
+        error:
+          "Gemini returned no answer"
       });
+
+    }
+
+
+    return res.status(200).json({
+
+      status: "success",
+
+      answer: answer
+
+    });
 
 
   } catch (error) {
 
     console.error(
-      "Samagam Gemini error:",
+      "Samagam Gemini REST error:",
       error
     );
 
 
-    return res
-      .status(500)
-      .json({
-        status: "error",
-        error:
-          "Gemini chatbot request failed"
-      });
+    return res.status(500).json({
+
+      status: "error",
+
+      error:
+        "Chatbot request failed"
+
+    });
 
   }
 
